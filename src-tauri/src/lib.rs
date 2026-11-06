@@ -1,0 +1,14 @@
+use serde::{Deserialize, Serialize};use serde_json::{Value};use std::{fs,path::PathBuf,process::Command,time::Instant};
+#[derive(Deserialize)] struct ApiRequest{method:String,url:String,headers:std::collections::HashMap<String,String>,body:Option<String>}
+#[derive(Serialize)]struct ApiResponse{ok:bool,status:u16,time_ms:u128,body:String}
+fn app_dir()->Result<PathBuf,String>{let p=dirs::data_local_dir().ok_or("找不到本地应用数据目录")?.join("LocalPostman");fs::create_dir_all(&p).map_err(|e|e.to_string())?;Ok(p)}
+fn workspace_path()->Result<PathBuf,String>{Ok(app_dir()?.join("workspace.json"))}
+#[tauri::command]fn load_workspace()->Result<Value,String>{let p=workspace_path()?;if p.exists(){serde_json::from_str(&fs::read_to_string(p).map_err(|e|e.to_string())?).map_err(|e|e.to_string())}else{Err("尚无本地工作区".into())}}
+#[tauri::command]fn save_workspace(workspace:Value)->Result<(),String>{fs::write(workspace_path()?,serde_json::to_string_pretty(&workspace).map_err(|e|e.to_string())?).map_err(|e|e.to_string())}
+#[tauri::command]fn export_workspace(workspace:Value)->Result<String,String>{let p=app_dir()?.join("localpostman-export.json");fs::write(&p,serde_json::to_string_pretty(&workspace).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;Ok(p.display().to_string())}
+#[tauri::command]async fn send_request(request:ApiRequest)->Result<ApiResponse,String>{let start=Instant::now();let client=reqwest::Client::new();let method=request.method.parse().map_err(|e|format!("无效 HTTP 方法：{e}"))?;let mut req=client.request(method,&request.url);for(k,v)in request.headers{req=req.header(k,v)}if let Some(b)=request.body{if !b.is_empty(){req=req.body(b)}}let r=req.send().await.map_err(|e|e.to_string())?;let status=r.status();let body=r.text().await.map_err(|e|e.to_string())?;Ok(ApiResponse{ok:status.is_success(),status:status.as_u16(),time_ms:start.elapsed().as_millis(),body})}
+fn repo()->Result<PathBuf,String>{std::env::current_dir().map_err(|e|e.to_string())}
+fn git(args:&[&str])->Result<String,String>{let o=Command::new("git").args(args).current_dir(repo()?).output().map_err(|e|e.to_string())?;if o.status.success(){Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())}else{Err(String::from_utf8_lossy(&o.stderr).trim().to_string())}}
+#[tauri::command]fn git_status()->Result<String,String>{git(&["status","--short","--branch"])}
+#[tauri::command]fn git_sync(message:String,push:bool)->Result<String,String>{save_workspace(load_workspace()?)?;git(&["add","."])?;let _=git(&["commit","-m",&message]);if push{let _=git(&["push"])?;}Ok(if push{"已提交并推送 Git".into()}else{"已提交到 Git".into()})}
+pub fn run(){tauri::Builder::default().invoke_handler(tauri::generate_handler![load_workspace,save_workspace,export_workspace,send_request,git_status,git_sync]).run(tauri::generate_context!()).expect("运行 Tauri 失败");}
