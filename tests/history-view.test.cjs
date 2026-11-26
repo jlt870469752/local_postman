@@ -1,0 +1,21 @@
+const fs=require('node:fs'),assert=require('node:assert/strict');
+const {JSDOM,VirtualConsole}=require('jsdom');
+(async()=>{
+ const errors=[],vc=new VirtualConsole();vc.on('jsdomError',e=>errors.push(e.message));
+ const dom=new JSDOM('<div id="app"></div>',{url:'http://localhost/',runScripts:'outside-only',virtualConsole:vc}),w=dom.window;w.TextEncoder=TextEncoder;
+ const workspace={collections:[],environments:[],history:[{id:'h1',name:'Example request',method:'GET',url:'http://example.test',at:Date.now()}],mockServers:[]};let saved;
+ w.testInvoke=async(c,args)=>{if(c==='load_workspace')return structuredClone(workspace);if(c==='save_workspace'){saved=structuredClone(args.workspace);return}if(c==='git_status')return'main';if(c==='service_status')return[];throw Error(c)};
+ const modules=['src/assets/postman-icons.js','src/import-request.js','src/import-collection.js','src/code-snippets.js'].map(p=>fs.readFileSync(p,'utf8').replace(/^export /gm,'')).join('\n');
+ w.eval('const invoke=window.testInvoke;\n'+modules+'\n'+fs.readFileSync('src/app.js','utf8').replace(/^import .*;\s*$/gm,''));
+ await new Promise(r=>setImmediate(r));const $=s=>w.document.querySelector(s);assert.ok($('[data-view="history"]'));$('[data-view="history"]').click();
+ assert.ok($('.history-list'));assert.match($('.history-list').textContent,/Example request/);assert.equal($('.side-sections'),null,'History has no collection-only secondary groups');assert.equal(w.document.querySelector('.section-toggle'),null);
+ $('[data-view="collections"]').click();
+ assert.equal($('.side-sections'),null,'Empty environments and unimplemented sections are hidden');
+ $('#envButton').click();$('#newEnv').click();$('#envName').value='QA';$('#saveEnv').click();await new Promise(r=>setImmediate(r));
+ assert.ok($('[data-section="Environments"]'),'Implemented environment entry remains available');
+ assert.equal(w.document.querySelectorAll('[data-section]').length,1,'Only implemented environment group is rendered');
+ $('[data-section="Environments"]').click();assert.ok($('[data-edit-env]'));
+ assert.equal($('.section-empty'),null,'No placeholder-only sections remain');
+ $('[data-view="history"]').click();assert.equal($('.side-sections'),null,'History never inherits environment groups');
+ await new Promise(r=>setImmediate(r));assert.deepEqual(errors,[]);dom.window.close();console.log('PASS: history is isolated and only implemented sidebar groups are shown');
+})().catch(e=>{console.error(e);process.exitCode=1});

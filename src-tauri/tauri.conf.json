@@ -1,1 +1,40 @@
-{"$schema":"https://schema.tauri.app/config/2","productName":"LocalPostman","version":"0.2.0","identifier":"com.localpostman.client","build":{"frontendDist":"../dist","devUrl":"http://localhost:1420","beforeDevCommand":"","beforeBuildCommand":""},"app":{"windows":[{"title":"LocalPostman","width":1360,"height":860,"minWidth":940,"minHeight":640}],"security":{"csp":null}},"bundle":{"active":true,"targets":"all","icon":[]}}
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LocalPostman",
+  "version": "0.2.0",
+  "identifier": "com.localpostman.client",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build:web"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "LocalPostman",
+        "width": 1360,
+        "height": 860,
+        "minWidth": 980,
+        "minHeight": 640,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 12,
+          "y": 18
+        }
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.icns"
+    ]
+  }
+}
