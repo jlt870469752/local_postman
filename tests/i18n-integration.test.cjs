@@ -83,6 +83,7 @@ test('User collection, folder, request, environment, history and workspace names
   try {
     assert.equal(h.$('.collection-head strong').textContent, 'Collections');
     assert.equal(h.$('[data-toggle-folder="f"] .tree-label').textContent, 'History');
+    h.click('[data-toggle-folder="f"]');
     assert.equal(h.$('[data-open-request="r"] .tree-label').textContent, 'Settings');
     assert.equal(h.$('.tab-title').textContent, 'Settings');
     assert.equal(h.$('#requestName').value, 'Settings');

@@ -14,17 +14,18 @@ const fixture = () => ({
     { id: 'qa', name: 'QA', values: { token: 'qa-initial' }, currentValues: { token: 'qa-current' } },
   ], history: [],
 });
-async function harness() {
+async function harness({ initial = fixture(), strictAuth = false } = {}) {
   const errors = [], calls = [], writes = [], vc = new VirtualConsole();
   vc.on('jsdomError', error => errors.push(error.message));
   const dom = new JSDOM('<div id="app"></div>', { url: 'http://localhost/', runScripts: 'outside-only', virtualConsole: vc });
   const w = dom.window; w.TextEncoder = TextEncoder;
-  let persisted = fixture(), failSave = false;
+  let persisted = structuredClone(initial), failSave = false;
   w.testInvoke = async (command, args = {}) => {
     calls.push({ command, args: structuredClone(args) });
     if (command === 'load_workspace') return structuredClone(persisted);
     if (command === 'save_workspace') {
       if (failSave) throw Error('disk full');
+      if (strictAuth && args.workspace.collections.some(collection => collection.items.some(request => request.auth === null))) throw Error('WORKSPACE_INVALID: auth 必须是对象');
       persisted = structuredClone(args.workspace); writes.push(structuredClone(persisted)); return;
     }
     if (command === 'workspace_list') return [{ id: 'default', name: 'My Workspace', active: true }];
@@ -47,6 +48,51 @@ async function harness() {
   const close = async () => { await settle(); assert.deepEqual(errors, [], 'Environment handlers must not throw'); w.close(); };
   return { w, $, all, click, fill, writes, calls, environment, rowFor, close, failSave(value) { failSave = value; } };
 }
+
+test('Saving environments repairs legacy null request auth while retaining drafts, history and unsaved baselines', async () => {
+  const initial = fixture(), request = initial.collections[0].items[0];
+  request.auth = null;
+  const baseline = { ...structuredClone(request), name: 'Original request' };
+  const draft = { ...structuredClone(request), id: 'draft', name: 'Unsaved request' };
+  initial.collections[0].items.push(draft);
+  initial.history.push({ ...structuredClone(request), id: 'history' });
+  initial.editorSession = { openRequestTabs: [request.id, draft.id], selectedRequestTab: request.id, requestBaselines: { [request.id]: baseline, [draft.id]: null } };
+  const h = await harness({ initial, strictAuth: true });
+  try {
+    h.click('#envButton'); h.click('#addEnvVar');
+    const index = h.all('[data-env-key]').length - 1;
+    h.fill(`[data-env-key="${index}"]`, 'localketang');
+    h.fill(`[data-env-value="${index}"]`, 'http://127.0.0.1:8000');
+    h.fill(`[data-env-current="${index}"]`, 'http://127.0.0.1:8000');
+    h.click('#saveEnv'); await settle();
+    assert.equal(h.$('.env-modal'), null);
+    assert.equal(h.environment('local').currentValues.localketang, 'http://127.0.0.1:8000');
+    const saved = h.writes.at(-1);
+    assert.deepEqual(saved.collections[0].items.map(item => item.auth), [{ type: 'No Auth' }, { type: 'No Auth' }]);
+    assert.deepEqual(saved.history[0].auth, { type: 'No Auth' });
+    assert.deepEqual(saved.editorSession.requestBaselines.request.auth, { type: 'No Auth' });
+    assert.equal(saved.editorSession.requestBaselines.request.name, 'Original request');
+    assert.equal(saved.editorSession.requestBaselines.draft, null, 'The unsaved request marker remains null');
+    h.click('#envButton');
+    assert.equal(h.$(`[data-env-current="${h.rowFor('localketang')}"]`).value, 'http://127.0.0.1:8000');
+    h.click('#cancelEnv');
+    assert.equal(initial.collections[0].items[0].auth, null, 'The loaded source fixture remains unchanged');
+  } finally { await h.close(); }
+});
+
+test('An imported collection with unset inherited auth does not block the next environment save', async () => {
+  const h = await harness({ strictAuth: true });
+  try {
+    h.click('#importWorkspace');
+    h.fill('#importText', JSON.stringify({ name: 'Inherited auth APIs', folders: [], requests: [{ name: 'Imported request', endpoint: 'https://example.test', method: 'GET', auth: { authType: 'inherit', authActive: true }, body: { contentType: null, body: null } }], auth: { authType: 'inherit', authActive: true } }));
+    h.click('#confirmImport'); await settle();
+    assert.equal(h.$('.import-modal'), null);
+    assert.deepEqual(h.writes.at(-1).collections[1].items[0].auth, { type: 'No Auth' });
+    h.click('#envButton'); h.fill('#envName', 'Local after import'); h.click('#saveEnv'); await settle();
+    assert.equal(h.$('.env-modal'), null);
+    assert.equal(h.environment('local').name, 'Local after import');
+  } finally { await h.close(); }
+});
 
 test('Sidebar New environment creates a separate empty draft without overwriting Local', async () => {
   const h = await harness();

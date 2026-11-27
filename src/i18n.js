@@ -47,6 +47,7 @@ const zh = {
   'Import and export': '导入与导出', 'Export data': '导出数据', 'Export Data': '导出数据', 'Import data': '导入数据', 'Import Data': '导入数据',
   'Save the current local workspace to a JSON file, including Collections and environments.': '将当前本地工作区（含集合和环境）保存为 JSON 文件。',
   'Import cURL, a Postman Collection or environment, or a local workspace JSON file.': '导入 cURL、Postman 集合、环境或本地工作区 JSON 文件。',
+  'Import cURL, a Postman or Hoppscotch Collection, an environment, or a local workspace JSON file.': '导入 cURL、Postman 或 Hoppscotch 集合、环境或本地工作区 JSON 文件。',
   'Local data': '本地数据', 'Clear request history': '清除请求历史', 'Clear history in the current workspace.': '清除当前工作区的请求历史。',
   'Reset workspace': '重置工作区', 'Reset the current workspace after creating a local recovery copy.': '创建本地恢复副本后重置当前工作区。',
   'Clear request history?': '清除请求历史？', 'Reset current workspace?': '重置当前工作区？',
@@ -112,6 +113,7 @@ const zh = {
   'none': '无', 'raw': '原始', 'binary': '二进制',
   'Pretty': '格式化', 'Raw': '原始', 'Preview': '预览', 'Visualize': '可视化', 'Body / Headers': '响应体 / 响应头',
   'Paste cURL or Postman Collection JSON (v2 / v2.1), or choose a .json file. Environments and workspace JSON are also supported.': '粘贴 cURL 或 Postman 集合 JSON（v2 / v2.1），也可选择 .json 文件。同时支持环境和工作区 JSON。',
+  'Paste cURL, Postman Collection JSON (v2 / v2.1), or Hoppscotch Collection JSON, or choose a .json file. Environments and workspace JSON are also supported.': '粘贴 cURL、Postman 集合 JSON（v2 / v2.1）或 Hoppscotch 集合 JSON，也可选择 .json 文件。同时支持环境和工作区 JSON。',
   'Import text': '导入文本', 'Choose JSON file': '选择 JSON 文件', 'Close import': '关闭导入', 'Imported locally': '已导入本机',
   'Workspaces': '工作区', 'Local workspace': '本地工作区', 'Create workspace': '创建工作区', 'Create Workspace': '创建工作区',
   'Rename workspace': '重命名工作区', 'Delete workspace': '删除工作区', 'Workspace name': '工作区名称', 'Search workspaces': '搜索工作区', 'Search workspaces…': '搜索工作区…',
@@ -172,6 +174,7 @@ const zh = {
   'A route with this method and path already exists': '此方法和路径的路由已存在', 'Add at least one route': '请至少添加一个路由',
   'Mock saved locally': 'Mock 已保存在本机', 'Collection requests are already in this mock': '此 Mock 已包含集合中的请求', 'Variable names must be unique within an environment.': '同一环境中的变量名称不能重复。',
   'Select a Postman Collection JSON object': '请选择 Postman 集合 JSON 对象', 'Expected Postman collection v2, environment, or LocalPostman workspace': '需要 Postman v2 集合、环境或 LocalPostman 工作区。',
+  'Select a Collection JSON object': '请选择集合 JSON 对象', 'Expected Postman or Hoppscotch collection, environment, or LocalPostman workspace': '需要 Postman 或 Hoppscotch 集合、环境或 LocalPostman 工作区。',
 };
 
 let language = 'en';

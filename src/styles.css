@@ -266,3 +266,23 @@
 .header-suggestions [role=option]:focus-visible{outline:2px solid #7da8e9;outline-offset:-2px}
 .key-table{width:100%;max-width:none;overflow:visible}.key-head,.key-row{grid-template-columns:28px minmax(180px,1.15fr) minmax(180px,1fr) minmax(130px,.8fr) 25px;gap:0}.key-head{padding:0 1px}.key-row{border-bottom:1px solid #ececee}.key-row input:not([type=checkbox]){border:0;border-left:1px solid #ececee;border-radius:0;height:33px;background:transparent}.key-row input:not([type=checkbox]):hover{background:#fafafa}.key-row input:not([type=checkbox]):focus{outline:1px solid #7da8e9;outline-offset:-1px;background:#fff}.key-row button{height:33px}.key-row button:hover{background:#f1f2f4;color:#555}.key-row input[type=checkbox]{margin:0 auto}
 :root[data-theme=dark] .header-suggestions{background:#292929;border-color:#555;box-shadow:0 8px 24px #0006}:root[data-theme=dark] .header-suggestions [role=option]{color:#ddd}:root[data-theme=dark] .header-suggestions [role=option]:hover,:root[data-theme=dark] .header-suggestions [role=option][aria-selected=true]{background:#3b3b3b;color:#fff}
+
+/* Keep every request body editor flush with the request/response splitter. */
+.workbench .builder-body{display:flex;flex-direction:column;min-height:0}
+.workbench .builder-body>.body-layout{flex:1;min-height:0;height:100%}
+.body-layout>.raw-editor{flex:1;min-height:0;height:auto}
+.body-layout>.raw-editor .code-surface,
+.body-layout>.raw-editor .code-surface>textarea{height:100%;min-height:0}
+.body-layout>.body-empty,.body-layout>.binary-panel{flex:1;height:auto;min-height:220px}
+.body-layout>.graphql-editor{display:flex;flex:1;flex-direction:column;min-height:0;overflow:auto}
+.body-layout>.graphql-editor .raw-editor{flex:1;height:auto;min-height:100px}
+.body-layout>.graphql-editor .raw-editor .code-surface,
+.body-layout>.graphql-editor .raw-editor .code-surface>textarea{height:100%;min-height:0}
+
+.sidebar-title>.collection-section-toggle,.side-sections .section-toggle{display:flex;align-items:center;justify-content:flex-start;gap:4px;height:28px;font-size:10px;font-weight:600;line-height:14px;letter-spacing:.06em;color:inherit;text-align:left}
+.sidebar-title>.collection-section-toggle{width:auto;flex:1;padding:0}
+.side-sections .section-toggle{padding:0 12px}
+.sidebar-title>.collection-section-toggle>span,.side-sections .section-toggle>span{color:inherit}
+.sidebar-title>.collection-section-toggle .chevron,.side-sections .section-toggle .chevron{display:flex;align-items:center;justify-content:center;width:10px;flex:0 0 10px;font-size:14px;line-height:14px;color:#8b8b8b}
+.sidebar-title>.collection-section-toggle:hover{background:transparent}
+.sidebar.collections-collapsed>.side-sections{margin-top:0}

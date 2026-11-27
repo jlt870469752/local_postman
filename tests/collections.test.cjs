@@ -40,17 +40,80 @@ async function harness(workspace = fixture()) {
   const fill = (selector, value) => { const el = $(selector); assert.ok(el, 'Missing field: ' + selector); el.value = value; el.dispatchEvent(new w.Event('input', { bubbles: true })); };
   const select = (selector, value) => { fill(selector, value); $(selector).dispatchEvent(new w.Event('change', { bubbles: true })); };
   const row = (kind, id) => $(`.tree-row[data-entity-kind="${kind}"][data-entity-id="${id}"]`);
-  const action = (kind, id, name) => { assert.ok(row(kind, id), `Missing ${kind} ${id}`); click(row(kind, id).querySelector('[data-tree-menu]')); click(`[data-tree-action="${name}"]`); };
+  const reveal = id => { const c = snapshot().collections.find(c => c.folders.some(f => f.id === id)); if (!c) return; const parents = []; let f = c.folders.find(f => f.id === id); while (f) { parents.unshift(f.id); f = c.folders.find(parent => parent.id === f.parentId); } for (const folderId of parents) if ($(`[data-toggle-folder="${folderId}"]`)?.getAttribute('aria-expanded') === 'false') click(`[data-toggle-folder="${folderId}"]`); };
+  const action = (kind, id, name) => { if (kind === 'folder') { const folder = snapshot().collections.flatMap(c => c.folders).find(f => f.id === id); if (folder?.parentId) reveal(folder.parentId); } if (kind === 'request') { const request = snapshot().collections.flatMap(c => c.items).find(r => r.id === id); if (request?.folderId) reveal(request.folderId); } assert.ok(row(kind, id), `Missing ${kind} ${id}`); click(row(kind, id).querySelector('[data-tree-menu]')); click(`[data-tree-action="${name}"]`); };
   const confirm = () => click('#entityConfirm');
   const snapshot = () => JSON.parse(JSON.stringify(saved ?? workspace));
   const collection = id => snapshot().collections.find(c => c.id === id);
   const close = async () => { await tick(); assert.deepEqual(errors, [], 'UI event handlers must not throw'); dom.window.close(); };
-  return { w, dom, $, all, click, fill, select, row, action, confirm, snapshot, collection, errors, close };
+  return { w, dom, $, all, click, fill, select, row, action, confirm, snapshot, collection, reveal, errors, close };
 }
 
 (async () => {
   const checks = [], failures = [];
   const test = async (name, run) => { try { await run(); checks.push(name); console.log('PASS: ' + name); } catch (error) { failures.push(name); console.error('FAIL: ' + name + '\n' + error.stack); } };
+  await test('Collections starts expanded, can collapse, and folders start closed until explicitly expanded', async () => {
+    const h = await harness();
+    try {
+      assert.equal(h.$('#toggleCollections').getAttribute('aria-expanded'), 'true');
+      assert.equal(h.$('[data-toggle-collection="c-one"]').getAttribute('aria-expanded'), 'true');
+      assert.equal(h.$('[data-toggle-folder="f-root"]').getAttribute('aria-expanded'), 'false');
+      assert.equal(h.$('[data-toggle-folder="f-sibling"]').getAttribute('aria-expanded'), 'false');
+      assert.equal(h.row('folder', 'f-child'), null); assert.equal(h.row('request', 'r-parent'), null);
+      h.click('#toggleCollections');
+      assert.equal(h.$('#toggleCollections').getAttribute('aria-expanded'), 'false');
+      assert.equal(h.$('#collectionsTree'), null);
+      h.click('[data-builder="Headers"]');
+      assert.equal(h.$('#toggleCollections').getAttribute('aria-expanded'), 'false', 'A render does not reopen the section');
+      h.click('#toggleCollections'); h.click('[data-toggle-folder="f-root"]');
+      assert.ok(h.row('request', 'r-parent'));
+      assert.equal(h.$('[data-toggle-folder="f-child"]').getAttribute('aria-expanded'), 'false');
+      h.click('[data-toggle-folder="f-child"]'); assert.ok(h.row('request', 'r-deep'));
+      h.click('[data-toggle-folder="f-root"]'); h.click('[data-builder="Body"]');
+      assert.equal(h.row('request', 'r-parent'), null, 'Manual collapse survives editor navigation');
+      h.fill('#sidebarFilter', 'Needle'); assert.ok(h.row('request', 'r-deep'));
+      h.fill('#sidebarFilter', ''); assert.equal(h.row('request', 'r-deep'), null, 'Search does not permanently open folders');
+      h.click('#toggleCollections'); h.click('[data-view="history"]'); h.click('[data-view="collections"]');
+      assert.equal(h.$('#toggleCollections').getAttribute('aria-expanded'), 'false', 'View switching retains the section state');
+      assert.equal(h.snapshot().collections[0].items.length, 4, 'Collapse never removes collection contents');
+    } finally { await h.close(); }
+  });
+  await test('Collections toggles once after URL edits and parameter editor rebinding', async () => {
+    const h = await harness();
+    try {
+      h.fill('#url', 'http://example.test/updated?one=1');
+      h.click('#toggleCollections');
+      assert.equal(h.$('#toggleCollections').getAttribute('aria-expanded'), 'false', 'Editing URL must not attach a second toggle listener');
+      assert.equal(h.$('#collectionsTree'), null);
+      h.click('#toggleCollections');
+      assert.equal(h.$('#toggleCollections').getAttribute('aria-expanded'), 'true');
+      h.click('[data-add-row="param"]');
+      h.fill('#url', 'http://example.test/updated?one=1&two=2');
+      h.fill('#url', 'http://example.test/updated?one=1&two=2&three=3');
+      h.click('#toggleCollections');
+      assert.equal(h.$('#collectionsTree'), null, 'Repeated editor rebinding must not cancel a collapse');
+      h.click('#toggleCollections');
+      assert.ok(h.$('#collectionsTree'));
+      assert.equal(h.$('#url').value, 'http://example.test/updated?one=1&two=2&three=3');
+    } finally { await h.close(); }
+  });
+  await test('Environments follows the Collections header when Collections is collapsed', async () => {
+    const data = fixture(); data.environments = [{ id: 'local', name: 'Local', values: {} }];
+    const h = await harness(data);
+    try {
+      assert.equal(h.$('.sidebar').classList.contains('collections-collapsed'), false);
+      h.click('#toggleCollections');
+      assert.ok(h.$('.sidebar').classList.contains('collections-collapsed'));
+      assert.equal(h.$('.sidebar-title').nextElementSibling, h.$('.side-sections'));
+      h.click('[data-section="Environments"]');
+      assert.ok(h.$('[data-edit-env="local"]'));
+      assert.ok(h.$('.sidebar').classList.contains('collections-collapsed'));
+      h.click('#toggleCollections');
+      assert.equal(h.$('.sidebar').classList.contains('collections-collapsed'), false);
+      assert.ok(h.$('#collectionsTree'));
+      assert.equal(h.$('[data-section="Environments"]').getAttribute('aria-expanded'), 'true');
+    } finally { await h.close(); }
+  });
   await test('Collection create, edit, rename, cancellation and duplicate are persisted', async () => {
     const h = await harness();
     try {
@@ -125,7 +188,7 @@ async function harness(workspace = fixture()) {
     const h = await harness();
     try {
       h.fill('#url', 'http://example.test/root-keep');
-      h.click('[data-open-request="r-deep"]'); h.click('[data-open-request="r-other"]');
+      h.reveal('f-child'); h.click('[data-open-request="r-deep"]'); h.click('[data-open-request="r-other"]');
       h.action('request', 'r-other', 'delete'); h.confirm();
       assert.equal(h.$('#requestName').value, 'Needle request'); assert.equal(h.$('[data-select-tab="r-other"]'), null);
       assert.equal(h.collection('c-one').items.find(r => r.id === 'r-root').url, 'http://example.test/root-keep');
@@ -164,7 +227,7 @@ async function harness(workspace = fixture()) {
   await test('Save initializes each request destination, isolates cancellation and creates named destinations', async () => {
     const h = await harness();
     try {
-      h.click('[data-open-request="r-deep"]'); h.click('#save');
+      h.reveal('f-child'); h.click('[data-open-request="r-deep"]'); h.click('#save');
       assert.ok(h.$('[data-save-folder="c-one:f-child"].selected')); assert.equal(h.$('#confirmSave').disabled, false);
       h.fill('#saveRequestName', 'Cancelled name'); h.click('[data-save-collection="c-two"]'); h.click('#cancelSave');
       assert.equal(h.$('#requestName').value, 'Needle request'); assert.equal(h.collection('c-one').items.find(r => r.id === 'r-deep').name, 'Needle request');
@@ -191,7 +254,9 @@ async function harness(workspace = fixture()) {
       const parent = c.folders.find(f => f.name === 'Parent folder'), child = c.folders.find(f => f.name === 'Child folder');
       assert.notEqual(parent.id, 'f-root'); assert.equal(child.parentId, parent.id);
       const deep = c.items.find(r => r.name === 'Needle request'); assert.equal(deep.folderId, child.id);
-      assert.ok(h.row('folder', child.id)); assert.ok(h.row('request', deep.id));
+      assert.equal(h.$(`[data-toggle-folder="${parent.id}"]`).getAttribute('aria-expanded'), 'false');
+      assert.equal(h.row('folder', child.id), null); assert.equal(h.row('request', deep.id), null);
+      h.reveal(child.id); assert.ok(h.row('request', deep.id));
     } finally { await h.close(); }
   });
   await test('Deleting a request beside Mock tabs selects the corresponding Mock details', async () => {

@@ -99,8 +99,54 @@ pub fn validate(workspace: &Value) -> Result<(), String> {
     if let Some(session) = object.get("editorSession") {
         optional_type(session, "requestBaselines", Value::is_object, "对象")?;
         optional_type(session, "openRequestTabs", Value::is_array, "数组")?;
+        if let Some(baselines) = session.get("requestBaselines").and_then(Value::as_object) {
+            for baseline in baselines.values() {
+                optional_type(baseline, "auth", Value::is_object, "对象")?;
+            }
+        }
+    }
+    if let Some(history) = object.get("history").and_then(Value::as_array) {
+        for request in history {
+            optional_type(request, "auth", Value::is_object, "对象")?;
+        }
     }
     Ok(())
+}
+
+// Older importers represented an unresolved auth inheritance chain as null.
+// Requests without an inherited auth use No Auth; normalize only that legacy
+// representation, leaving malformed non-object values for validation to reject.
+fn normalize_legacy_auth(workspace: &mut Value) {
+    fn request_auth(request: &mut Value) {
+        if let Some(auth) = request.get_mut("auth") {
+            if auth.is_null() {
+                *auth = serde_json::json!({"type": "No Auth"});
+            }
+        }
+    }
+    if let Some(collections) = workspace.get_mut("collections").and_then(Value::as_array_mut) {
+        for collection in collections {
+            if let Some(items) = collection.get_mut("items").and_then(Value::as_array_mut) {
+                for request in items {
+                    request_auth(request);
+                }
+            }
+        }
+    }
+    if let Some(history) = workspace.get_mut("history").and_then(Value::as_array_mut) {
+        for request in history {
+            request_auth(request);
+        }
+    }
+    if let Some(baselines) = workspace
+        .get_mut("editorSession")
+        .and_then(|session| session.get_mut("requestBaselines"))
+        .and_then(Value::as_object_mut)
+    {
+        for request in baselines.values_mut() {
+            request_auth(request);
+        }
+    }
 }
 
 fn validate_record(value: &Value, label: &str) -> Result<(), String> {
@@ -125,8 +171,9 @@ fn optional_type(
 }
 
 pub fn decode(bytes: &[u8]) -> Result<Value, String> {
-    let workspace: Value = serde_json::from_slice(bytes)
+    let mut workspace: Value = serde_json::from_slice(bytes)
         .map_err(|e| format!("WORKSPACE_INVALID: 工作区 JSON 无法解析：{e}"))?;
+    normalize_legacy_auth(&mut workspace);
     validate(&workspace).map_err(|e| format!("WORKSPACE_INVALID: {e}"))?;
     Ok(workspace)
 }
@@ -187,7 +234,9 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 pub fn save(path: &Path, workspace: &Value) -> Result<(), String> {
-    validate(workspace).map_err(|e| format!("WORKSPACE_INVALID: {e}"))?;
+    let mut workspace = workspace.clone();
+    normalize_legacy_auth(&mut workspace);
+    validate(&workspace).map_err(|e| format!("WORKSPACE_INVALID: {e}"))?;
     match fs::read(path) {
         Ok(previous) => {
             decode(&previous).map_err(|e| {
@@ -204,7 +253,7 @@ pub fn save(path: &Path, workspace: &Value) -> Result<(), String> {
     }
     atomic_write(
         path,
-        &serde_json::to_vec_pretty(workspace).map_err(|e| e.to_string())?,
+        &serde_json::to_vec_pretty(&workspace).map_err(|e| e.to_string())?,
     )
 }
 
@@ -315,5 +364,95 @@ mod tests {
         ] {
             assert!(decode(&serde_json::to_vec(&value).unwrap()).is_err());
         }
+    }
+
+    #[test]
+    fn legacy_null_auth_loads_saves_and_recovers_without_losing_original_bytes() {
+        let dir = temp_dir();
+        let path = dir.join("workspace.json");
+        let legacy = serde_json::json!({
+            "collections": [{"id":"c","name":"Imported","items":[
+                {"id":"r","name":"Inherited","auth":null},
+                {"id":"bearer","auth":{"type":"Bearer Token","token":"keep"}},
+                {"id":"missing"}
+            ]}],
+            "history": [{"id":"h","auth":null}],
+            "editorSession": {"requestBaselines": {
+                "r":{"id":"r","auth":null}, "draft":null
+            }},
+            "environments": [{"id":"e","name":"Local","values":{"host":"http://localhost"}}]
+        });
+        let original = serde_json::to_vec(&legacy).unwrap();
+        fs::write(&path, &original).unwrap();
+        let loaded = read(&path).unwrap();
+        assert_eq!(loaded["collections"][0]["items"][0]["auth"]["type"], "No Auth");
+        assert_eq!(loaded["history"][0]["auth"]["type"], "No Auth");
+        assert_eq!(loaded["editorSession"]["requestBaselines"]["r"]["auth"]["type"], "No Auth");
+        assert!(loaded["editorSession"]["requestBaselines"]["draft"].is_null());
+        assert!(loaded["collections"][0]["items"][2].get("auth").is_none());
+        assert_eq!(loaded["collections"][0]["items"][1]["auth"]["token"], "keep");
+        assert_eq!(fs::read(&path).unwrap(), original, "Loading must not rewrite the user's file");
+
+        // Saving an environment must accept the old in-memory snapshot too.
+        let mut edited = legacy.clone();
+        edited["environments"][0]["values"]["host"] = serde_json::json!("http://127.0.0.1:8000");
+        save(&path, &edited).unwrap();
+        assert_eq!(edited["collections"][0]["items"][0]["auth"], Value::Null, "Saving does not mutate the caller's snapshot");
+        let saved = read(&path).unwrap();
+        assert_eq!(saved["environments"][0]["values"]["host"], "http://127.0.0.1:8000");
+        assert_eq!(saved["collections"][0]["items"][0]["auth"]["type"], "No Auth");
+        assert_eq!(fs::read(backup_path(&path)).unwrap(), original, "The backup preserves exact legacy bytes");
+        assert_eq!(restore_backup(&path).unwrap(), loaded);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(read(&path).unwrap(), loaded);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_auth_compatibility_does_not_accept_invalid_auth_types() {
+        let dir = temp_dir();
+        let path = dir.join("workspace.json");
+        for auth in [serde_json::json!("none"), serde_json::json!([]), serde_json::json!(false), serde_json::json!(1)] {
+            for workspace in [
+                serde_json::json!({"collections":[{"id":"c","name":"APIs","items":[{"id":"r","auth":auth}]}]}),
+                serde_json::json!({"collections":[],"history":[{"id":"h","auth":auth}]}),
+                serde_json::json!({"collections":[],"editorSession":{"requestBaselines":{"r":{"id":"r","auth":auth}}}}),
+            ] {
+                assert!(decode(&serde_json::to_vec(&workspace).unwrap()).unwrap_err().contains("auth 必须是对象"));
+                assert!(save(&path, &workspace).unwrap_err().contains("auth 必须是对象"));
+                assert!(!path.exists());
+            }
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn frontend_collection_imports_satisfy_native_workspace_contract() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let output = std::process::Command::new("node")
+            .current_dir(root)
+            .args(["--input-type=module", "-e", r#"
+                import { parseCollection } from './src/import-collection.js';
+                const hoppscotch = { name:'Imported', folders:[], requests:[{
+                    name:'Inherited', endpoint:'https://example.test', method:'GET',
+                    auth:{authType:'inherit',authActive:true}, body:{contentType:null,body:null}
+                }] };
+                const postman = { info:{name:'Postman'}, item:[{
+                    name:'Inherited', request:{method:'GET',url:'https://example.test'}
+                }] };
+                let sequence = 0;
+                const collections = [hoppscotch, postman].map(input => parseCollection(input, prefix => prefix + ++sequence).collection);
+                process.stdout.write(JSON.stringify({collections,environments:[],history:[]}));
+            "#])
+            .output()
+            .expect("Node is required to verify the frontend/native import contract");
+        assert!(output.status.success(), "Collection importer failed: {}", String::from_utf8_lossy(&output.stderr));
+        let workspace: Value = serde_json::from_slice(&output.stdout).unwrap();
+        validate(&workspace).expect("New imports must already satisfy native validation before migration");
+        let dir = temp_dir();
+        let path = dir.join("workspace.json");
+        save(&path, &workspace).unwrap();
+        assert_eq!(read(&path).unwrap(), workspace);
+        fs::remove_dir_all(dir).unwrap();
     }
 }

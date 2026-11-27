@@ -78,6 +78,125 @@ async function harness(workspace = fixture(), storage = {}) {
     try { await run(); checks.push(name); process.stdout.write('PASS: ' + name + '\n'); }
     catch (error) { failures.push(name); process.stderr.write('FAIL: ' + name + '\n' + error.stack + '\n'); }
   };
+  await test('Empty new requests close directly and remove their temporary request record', async () => {
+    const h = await harness();
+    try {
+      h.click('#newTab'); const id = h.activeId();
+      h.closeTab(id); await flush();
+      assert.equal(h.$('.unsaved-modal'), null);
+      assert.equal(h.tab(id), null);
+      assert.equal(h.requests().some(request => request.id === id), false);
+      assert.equal(h.activeId(), 'r-original');
+    } finally { await h.dispose(); }
+  });
+  await test('A new request whose URL was cleared closes without a save prompt', async () => {
+    const h = await harness();
+    try {
+      h.click('#newTab'); const id = h.activeId();
+      h.fill('#url', 'https://example.test/temporary'); h.fill('#url', '');
+      h.closeTab(id); await flush();
+      assert.equal(h.$('.unsaved-modal'), null);
+      assert.equal(h.tab(id), null);
+      assert.equal(h.requests().some(request => request.id === id), false);
+    } finally { await h.dispose(); }
+  });
+  await test('Visiting empty request editor tabs does not turn defaults into content worth saving', async () => {
+    const h = await harness();
+    try {
+      h.click('#newTab'); const id = h.activeId();
+      for (const name of ['Headers', 'Authorization', 'Settings', 'Body', 'Docs', 'Params']) h.click(`[data-builder="${name}"]`);
+      h.closeTab(id); await flush();
+      assert.equal(h.$('.unsaved-modal'), null);
+      assert.equal(h.tab(id), null);
+      assert.equal(h.requests().some(request => request.id === id), false);
+    } finally { await h.dispose(); }
+  });
+  await test('Closing an empty background request preserves the active request and its edits', async () => {
+    const h = await harness();
+    try {
+      h.click('#newTab'); const id = h.activeId();
+      h.click('[data-open-request="r-other"]');
+      h.fill('#url', 'https://example.test/active-edited');
+      h.closeTab(id); await flush();
+      assert.equal(h.$('.unsaved-modal'), null);
+      assert.equal(h.tab(id), null);
+      assert.equal(h.activeId(), 'r-other');
+      assert.equal(h.$('#url').value, 'https://example.test/active-edited');
+      assert.equal(h.requests().some(request => request.id === id), false);
+    } finally { await h.dispose(); }
+  });
+  await test('A restored empty draft closes directly after restart', async () => {
+    let workspace, storage, id;
+    const first = await harness();
+    try {
+      first.click('#newTab'); id = first.activeId();
+      workspace = first.snapshot(); storage = first.storageSnapshot();
+    } finally { await first.dispose(); }
+    const h = await harness(workspace, storage);
+    try {
+      assert.ok(h.tab(id));
+      h.closeTab(id); await flush();
+      assert.equal(h.$('.unsaved-modal'), null);
+      assert.equal(h.tab(id), null);
+      assert.equal(h.requests().some(request => request.id === id), false);
+    } finally { await h.dispose(); }
+  });
+  const draftEdits = [
+    ['name', h => h.fill('#requestName', 'Named draft')],
+    ['method', h => h.select('#method', 'POST')],
+    ['query key', h => h.fill('[data-param-key="0"]', 'query')],
+    ['query value only', h => h.fill('[data-param-value="0"]', 'value without a key')],
+    ['header', h => { h.click('[data-builder="Headers"]'); h.fill('[data-header-key="0"]', 'X-Draft'); }],
+    ['header value only', h => { h.click('[data-builder="Headers"]'); h.fill('[data-header-value="0"]', 'value without a key'); }],
+    ['description', h => { h.click('[data-builder="Docs"]'); h.fill('#description', 'Draft notes'); }],
+    ['body', h => { h.click('[data-builder="Body"]'); h.fill('#body', '{"draft":true}'); }],
+    ['authorization', h => { h.click('[data-builder="Authorization"]'); h.select('#authType', 'Bearer Token'); h.fill('[data-auth="token"]', 'draft-token'); }],
+    ['request settings', h => { h.click('[data-builder="Settings"]'); h.fill('#requestTimeout', '1234'); }],
+  ];
+  for (const [name, edit] of draftEdits) await test('A draft without a URL still prompts when it has ' + name, async () => {
+    const h = await harness();
+    try {
+      h.click('#newTab'); const id = h.activeId();
+      edit(h); h.closeTab(id);
+      assert.ok(h.$('.unsaved-modal'), 'A missing URL must not discard other draft content');
+      assert.ok(h.tab(id));
+      h.click('#cancelUnsaved');
+    } finally { await h.dispose(); }
+  });
+  const storedDraftContent = [
+    ['form fields', { bodyType: 'form-data', bodyFields: [{ key: 'field', value: 'draft', enabled: true }] }],
+    ['disabled form field content', { bodyType: 'form-data', bodyFields: [{ key: 'field', value: 'draft', enabled: false }] }],
+    ['GraphQL query', { bodyType: 'graphql', graphqlQuery: 'query { viewer { id } }', graphqlVariables: '{}' }],
+    ['GraphQL variables', { bodyType: 'graphql', graphqlQuery: '', graphqlVariables: '{"id":1}' }],
+    ['selected binary file', { bodyType: 'binary', binaryName: 'draft.bin', binaryBytes: [] }],
+    ['binary bytes', { bodyType: 'binary', binaryName: '', binaryBytes: [0, 1, 2] }],
+    ['pre-request script', { preRequestScript: 'console.log("draft")' }],
+    ['test script', { tests: 'pm.test("draft", () => {})' }],
+    ['request variables', { variables: [{ key: 'draft', value: 'value', enabled: true }] }],
+  ];
+  for (const [name, content] of storedDraftContent) await test('A restored draft with an empty URL retains its ' + name, async () => {
+    const workspace = fixture(), id = 'restored-draft';
+    workspace.collections[0].items.push({ id, name: 'Untitled Request', method: 'GET', url: '', headers: [], params: [], body: '', ...content });
+    workspace.editorSession = { requestBaselines: { [id]: null }, openRequestTabs: [id], selectedRequestTab: id };
+    const h = await harness(workspace);
+    try {
+      h.closeTab(id);
+      assert.ok(h.$('.unsaved-modal'), 'Hidden or disabled draft content must remain recoverable');
+      assert.ok(h.tab(id));
+      h.click('#cancelUnsaved');
+    } finally { await h.dispose(); }
+  });
+  await test('Clearing the URL of a saved request still asks to save the change', async () => {
+    const h = await harness();
+    try {
+      h.click('[data-open-request="r-other"]'); h.fill('#url', '');
+      h.closeTab('r-other');
+      assert.ok(h.$('.unsaved-modal'));
+      assert.ok(h.tab('r-other'));
+      h.click('#cancelUnsaved');
+      assert.equal(h.$('#url').value, '');
+    } finally { await h.dispose(); }
+  });
   await test('Unchanged saved requests close without prompting after editor navigation', async () => {
     const h = await harness();
     try {
@@ -233,6 +352,7 @@ async function harness(workspace = fixture(), storage = {}) {
     const h = await harness();
     try {
       h.click('#newTab'); const id = h.activeId();
+      h.fill('#url', 'https://example.test/escape-save');
       h.closeTab(id); h.click('#saveUnsaved'); h.escape();
       assert.equal(h.$('.save-modal'), null);
       assert.ok(h.tab(id));
@@ -302,7 +422,7 @@ async function harness(workspace = fixture(), storage = {}) {
   await test('Always discard preference applies to later tab closes', async () => {
     const h = await harness();
     try {
-      h.click('#newTab'); const first = h.activeId(); h.closeTab(first);
+      h.click('#newTab'); const first = h.activeId(); h.fill('#url', 'https://example.test/first-discard'); h.closeTab(first);
       h.click('#alwaysDiscardUnsaved'); h.click('#discardUnsaved');
       h.click('#newTab'); const second = h.activeId(); h.fill('#url', 'https://example.test/auto-discard');
       h.closeTab(second); await flush();

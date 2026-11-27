@@ -146,7 +146,7 @@ export function createSettingsPanel({ invoke, onChange = () => {}, onExport, onI
   function data() {
     return heading('Import and export') +
       row('Export data', 'Save the current local workspace to a JSON file, including Collections and environments.', `<button id="settingsExport" ${onExport && !actionBusy ? '' : 'disabled'}>Export Data</button>`) +
-      row('Import data', 'Import cURL, a Postman Collection or environment, or a local workspace JSON file.', `<button id="settingsImport" ${onImport ? '' : 'disabled'}>Import Data</button>`) +
+      row('Import data', 'Import cURL, a Postman or Hoppscotch Collection, an environment, or a local workspace JSON file.', `<button id="settingsImport" ${onImport ? '' : 'disabled'}>Import Data</button>`) +
       heading('Local data') + row('Clear request history', 'Clear history in the current workspace.', `<button id="settingsClearHistory" ${onClearHistory ? '' : 'disabled'}>Clear history</button>`) +
       row('Reset workspace', 'Reset the current workspace after creating a local recovery copy.', `<button id="settingsReset" class="settings-danger" ${onReset ? '' : 'disabled'}>Reset workspace</button>`) + confirmation();
   }
